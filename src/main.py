@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, Set
 
@@ -14,19 +16,66 @@ import ics
 ICS_AUTHOR = "상명대학교<@smu.ac.kr>, 김동주<hepheir@gmail.com>"
 ICS_FILE_OUTPUT_PATH = "docs/calendar.ics"
 
+CURRENT_YEAR = datetime.now().year
+TARGET_YEARS = [
+    CURRENT_YEAR-1,
+    CURRENT_YEAR,
+    CURRENT_YEAR+1,
+]
+ADDITIONAL_TARGET_YEARS = [
+    CURRENT_YEAR-3,
+    CURRENT_YEAR-2,
+    CURRENT_YEAR+2,
+]
+
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='[%(asctime)s] [%(name)-24s] [%(levelname)-8s]: %(message)s',
+)
+
+logger = logging.getLogger('smu-calendar')
+
 
 def main():
-    smu_calendar = SmuCalendar()
     icalendar = ics.icalendar.Calendar(creator=ICS_AUTHOR)
+    events = fetch_events()
 
-    for evt in sorted(smu_calendar.get_events()):
+    for evt in sorted(events):
         icalendar.events.add(evt.to_ics())
+
+    logger.info(f'📋 writing events on "{ICS_FILE_OUTPUT_PATH}".')
 
     if not os.path.exists(os.path.dirname(ICS_FILE_OUTPUT_PATH)):
         os.makedirs(os.path.dirname(ICS_FILE_OUTPUT_PATH))
 
     with open(ICS_FILE_OUTPUT_PATH, 'w') as f:
         f.writelines(icalendar.serialize_iter())
+
+
+def fetch_events() -> Set[SmuCalendarEvent]:
+    crawler = SmuCalendarCrawler()
+    events: Set[SmuCalendarEvent] = set()
+
+    for year in TARGET_YEARS:
+        try:
+            logger.info(f'🌀 start crawling {year} events.')
+            events.update(crawler.get_events(year))
+        except Exception:
+            logger.error(f'❌ failed to crawl {year} events.')
+        else:
+            logger.info(f'✅ crawled {year} events successfully.')
+
+    for year in ADDITIONAL_TARGET_YEARS:
+        try:
+            logger.info(f'start crawling {year} events. (additional)')
+            events.update(crawler.get_events(year))
+        except Exception:
+            logger.warning(f'⚠️ failed to crawl {year} events. (additional)')
+        else:
+            logger.info(f'✅ crawled {year} events successfully. (additional)')
+
+    return events
 
 
 class HTMLTagRemover(HTMLParser):
@@ -91,14 +140,9 @@ class SmuCalendarEvent:
         return remover.results
 
 
-class SmuCalendar:
-    def get_events(self) -> Set[SmuCalendarEvent]:
-        CURRENT_YEAR = datetime.now().year
-        events = set()
-        for year in range(2018, CURRENT_YEAR+2):
-            for evt in self._get_events(year):
-                events.add(evt)
-        return events
+class SmuCalendarCrawler:
+    def get_events(self, year: int) -> Set[SmuCalendarEvent]:
+        return set(self._get_events(year))
 
     def _get_events(self, year: int) -> Iterable[SmuCalendarEvent]:
         raw_data = self._fetch(year)
